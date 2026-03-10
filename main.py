@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-app = FastAPI(title="Aussie Loo Finder API")
+app = FastAPI(title="LooFinder API")
 
 app.add_middleware(
     CORSMiddleware,
