@@ -45,6 +45,10 @@ class Review(BaseModel):
     rating: int
     review_text: str
 
+@app.get("/")
+async def keep_alive():
+    return {"status": "Awake and ready!"}
+    
 @app.post("/api/reviews")
 async def submit_review(review: Review):
     conn = get_db_connection()
