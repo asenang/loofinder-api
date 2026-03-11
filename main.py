@@ -5,6 +5,7 @@ from psycopg2 import pool
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from datetime import datetime
 
 app = FastAPI(title="LooFinder API")
 
@@ -29,8 +30,14 @@ except:
     # Fallback for local development
     db_pool = None
 
+# Track last activity to prevent Render sleep
+last_activity = datetime.now()
+
 def get_db_connection():
     """Get database connection from pool or create new one"""
+    global last_activity
+    last_activity = datetime.now()  # Update activity on each connection
+    
     if db_pool:
         return db_pool.getconn()
     else:
@@ -64,7 +71,14 @@ class Review(BaseModel):
 
 @app.get("/")
 async def keep_alive():
-    return {"status": "Awake and ready!"}
+    global last_activity
+    last_activity = datetime.now()
+    return {
+        "status": "Awake and ready!", 
+        "last_activity": last_activity.isoformat(),
+        "uptime": "Active",
+        "message": "Preventing Render sleep with activity tracking"
+    }
     
 @app.post("/api/reviews")
 async def submit_review(review: Review):
