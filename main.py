@@ -1,14 +1,16 @@
 import os
-import psycopg2
-from psycopg2.extras import RealDictCursor
-from psycopg2 import pool
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from supabase import create_client, Client
+import asyncio
+import aiohttp
 from datetime import datetime
 
-app = FastAPI(title="LooFinder API")
+# Initialize FastAPI app
+app = FastAPI()
 
+# Configure CORS (Allows your GitHub Pages frontend to talk to this backend)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], 
@@ -17,101 +19,65 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./reviews.db")
+# Initialize Supabase client using Environment Variables from Render
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-# Connection pool for better performance
-try:
-    db_pool = psycopg2.pool.SimpleConnectionPool(
-        minconn=1,
-        maxconn=10,
-        dsn=DATABASE_URL
-    )
-except:
-    # Fallback for local development
-    db_pool = None
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise ValueError("Supabase credentials not found in environment variables.")
 
-# Track last activity to prevent Render sleep
-last_activity = datetime.now()
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-def get_db_connection():
-    """Get database connection from pool or create new one"""
-    global last_activity
-    last_activity = datetime.now()  # Update activity on each connection
-    
-    if db_pool:
-        return db_pool.getconn()
-    else:
-        return psycopg2.connect(DATABASE_URL)
+# Optional: Self-ping to keep API warm (not needed for Supabase, but included)
+async def self_ping():
+    """Ping our own API every 10 minutes to keep it warm"""
+    while True:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get('https://loofinder-api.onrender.com/', timeout=10) as response:
+                    if response.status == 200:
+                        print(f"✅ Self-ping successful: {datetime.now()}")
+        except Exception as e:
+            print(f"❌ Self-ping failed: {e}")
+        
+        await asyncio.sleep(600)  # 10 minutes
 
-def init_db():
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS reviews (
-                id SERIAL PRIMARY KEY,
-                facility_id TEXT,
-                rating INTEGER,
-                review_text TEXT
-            )
-        ''')
-        conn.commit()
-        cursor.close()
-        if not db_pool:
-            conn.close()
-    except Exception as e:
-        print(f"Database setup skipped or failed: {e}")
-
-init_db()
-
+# Define the Data Model for a Review (Now using the unique OSM ID)
 class Review(BaseModel):
     facility_id: str
     rating: int
     review_text: str
 
+# --- API Endpoints ---
+
+# 1. Keep-Alive Ping (Stops Render from going to sleep)
 @app.get("/")
 async def keep_alive():
-    global last_activity
-    last_activity = datetime.now()
-    return {
-        "status": "Awake and ready!", 
-        "last_activity": last_activity.isoformat(),
-        "uptime": "Active",
-        "message": "Preventing Render sleep with activity tracking"
-    }
-    
-@app.post("/api/reviews")
-async def submit_review(review: Review):
-    conn = get_db_connection()
-    try:
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO reviews (facility_id, rating, review_text) VALUES (%s, %s, %s)",
-            (review.facility_id, review.rating, review.review_text)
-        )
-        conn.commit()
-        
-        return {"status": "success", "message": f"Saved {review.rating}-star review for {review.facility_id}"}
-    finally:
-        # Always return connection to pool
-        if db_pool:
-            db_pool.putconn(conn)
-        else:
-            conn.close()
+    return {"status": "LooFinder is awake and ready!"}
 
+# 2. Submit a new review
+@app.post("/api/reviews")
+async def add_review(review: Review):
+    try:
+        data = supabase.table("reviews").insert({
+            "facility_id": review.facility_id,
+            "rating": review.rating,
+            "review_text": review.review_text
+        }).execute()
+        return {"message": "Review added successfully", "data": data.data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# 3. Fetch reviews for a specific facility
 @app.get("/api/reviews/{facility_id}")
 async def get_reviews(facility_id: str):
-    conn = get_db_connection()
     try:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        
-        cursor.execute("SELECT rating, review_text FROM reviews WHERE facility_id = %s", (facility_id,))
-        rows = cursor.fetchall()
-        
-        return {"facility_id": facility_id, "reviews": rows}
-    finally:
-        # Always return connection to pool
-        if db_pool:
-            db_pool.putconn(conn)
-        else:
-            conn.close()
+        response = supabase.table("reviews").select("*").eq("facility_id", facility_id).execute()
+        return {"reviews": response.data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Optional: Start self-ping on startup (uncomment if needed)
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(self_ping())
