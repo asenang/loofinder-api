@@ -50,7 +50,7 @@ def init_db():
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS reviews (
                 id SERIAL PRIMARY KEY,
-                facility_name TEXT,
+                facility_id TEXT,
                 rating INTEGER,
                 review_text TEXT
             )
@@ -65,7 +65,7 @@ def init_db():
 init_db()
 
 class Review(BaseModel):
-    facility_name: str
+    facility_id: str
     rating: int
     review_text: str
 
@@ -86,12 +86,12 @@ async def submit_review(review: Review):
     try:
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO reviews (facility_name, rating, review_text) VALUES (%s, %s, %s)",
-            (review.facility_name, review.rating, review.review_text)
+            "INSERT INTO reviews (facility_id, rating, review_text) VALUES (%s, %s, %s)",
+            (review.facility_id, review.rating, review.review_text)
         )
         conn.commit()
         
-        return {"status": "success", "message": f"Saved {review.rating}-star review for {review.facility_name}"}
+        return {"status": "success", "message": f"Saved {review.rating}-star review for {review.facility_id}"}
     finally:
         # Always return connection to pool
         if db_pool:
@@ -99,16 +99,16 @@ async def submit_review(review: Review):
         else:
             conn.close()
 
-@app.get("/api/reviews/{facility_name}")
-async def get_reviews(facility_name: str):
+@app.get("/api/reviews/{facility_id}")
+async def get_reviews(facility_id: str):
     conn = get_db_connection()
     try:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         
-        cursor.execute("SELECT rating, review_text FROM reviews WHERE facility_name = %s", (facility_name,))
+        cursor.execute("SELECT rating, review_text FROM reviews WHERE facility_id = %s", (facility_id,))
         rows = cursor.fetchall()
         
-        return {"facility_name": facility_name, "reviews": rows}
+        return {"facility_id": facility_id, "reviews": rows}
     finally:
         # Always return connection to pool
         if db_pool:
