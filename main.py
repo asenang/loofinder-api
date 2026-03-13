@@ -1,11 +1,9 @@
 import os
+from datetime import datetime
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from supabase import create_client, Client
-import asyncio
-import aiohttp
-from datetime import datetime
 
 # Initialize FastAPI app
 app = FastAPI()
@@ -28,21 +26,7 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Optional: Self-ping to keep API warm (not needed for Supabase, but included)
-async def self_ping():
-    """Ping our own API every 10 minutes to keep it warm"""
-    while True:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get('https://loofinder-api.onrender.com/', timeout=10) as response:
-                    if response.status == 200:
-                        print(f"✅ Self-ping successful: {datetime.now()}")
-        except Exception as e:
-            print(f"❌ Self-ping failed: {e}")
-        
-        await asyncio.sleep(600)  # 10 minutes
-
-# Define the Data Model for a Review (Now using the unique OSM ID)
+# Define the Data Model for a Review (Using the unique OSM ID)
 class Review(BaseModel):
     facility_id: str
     rating: int
@@ -50,12 +34,44 @@ class Review(BaseModel):
 
 # --- API Endpoints ---
 
-# 1. Keep-Alive Ping (Stops Render from going to sleep)
+# 1. Enhanced Keep-Alive Ping (Stops Render AND Supabase from going to sleep)
 @app.get("/")
 async def keep_alive():
-    return {"status": "LooFinder is awake and ready!"}
+    try:
+        # Quick Supabase database tap to reset the 7-day sleep timer
+        supabase.table("reviews").select("facility_id").limit(1).execute()
+        db_status = "✅ Supabase DB awake"
+    except Exception as e:
+        db_status = f"❌ Supabase DB tap failed: {str(e)}"
+    
+    return {
+        "status": "LooFinder API is awake and ready!",
+        "database": db_status,
+        "timestamp": datetime.utcnow().isoformat(),
+        "message": "API and database keep-alive active"
+    }
 
-# 2. Submit a new review
+# 2. Dedicated database health check endpoint
+@app.get("/health")
+async def health_check():
+    """Comprehensive health check for monitoring services"""
+    try:
+        # Test Supabase connection
+        db_test = supabase.table("reviews").select("facility_id").limit(1).execute()
+        db_status = "healthy"
+        db_count = len(db_test.data) if db_test.data else 0
+    except Exception as e:
+        db_status = f"error: {str(e)}"
+        db_count = 0
+    
+    return {
+        "api": "healthy",
+        "database": db_status,
+        "sample_records": db_count,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+# 3. Submit a new review
 @app.post("/api/reviews")
 async def add_review(review: Review):
     try:
@@ -76,8 +92,3 @@ async def get_reviews(facility_id: str):
         return {"reviews": response.data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-# Optional: Start self-ping on startup (uncomment if needed)
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(self_ping())
