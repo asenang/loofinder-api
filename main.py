@@ -1,5 +1,4 @@
 import os
-from datetime import datetime
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -34,44 +33,17 @@ class Review(BaseModel):
 
 # --- API Endpoints ---
 
-# 1. Enhanced Keep-Alive Ping (Stops Render AND Supabase from going to sleep)
+# 1. Keep-Alive Ping (Stops Render AND Supabase from going to sleep)
 @app.get("/")
 async def keep_alive():
     try:
-        # Quick Supabase database tap to reset the 7-day sleep timer
+        # Quickly tap the database to reset the 7-day sleep timer
         supabase.table("reviews").select("facility_id").limit(1).execute()
-        db_status = "✅ Supabase DB awake"
+        return {"status": "LooFinder API and Database are both awake!"}
     except Exception as e:
-        db_status = f"❌ Supabase DB tap failed: {str(e)}"
-    
-    return {
-        "status": "LooFinder API is awake and ready!",
-        "database": db_status,
-        "timestamp": datetime.utcnow().isoformat(),
-        "message": "API and database keep-alive active"
-    }
+        return {"status": f"API is awake, but DB tap failed: {str(e)}"}
 
-# 2. Dedicated database health check endpoint
-@app.get("/health")
-async def health_check():
-    """Comprehensive health check for monitoring services"""
-    try:
-        # Test Supabase connection
-        db_test = supabase.table("reviews").select("facility_id").limit(1).execute()
-        db_status = "healthy"
-        db_count = len(db_test.data) if db_test.data else 0
-    except Exception as e:
-        db_status = f"error: {str(e)}"
-        db_count = 0
-    
-    return {
-        "api": "healthy",
-        "database": db_status,
-        "sample_records": db_count,
-        "timestamp": datetime.utcnow().isoformat()
-    }
-
-# 3. Submit a new review
+# 2. Submit a new review
 @app.post("/api/reviews")
 async def add_review(review: Review):
     try:
